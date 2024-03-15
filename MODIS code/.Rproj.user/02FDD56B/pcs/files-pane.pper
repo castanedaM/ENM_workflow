@@ -1,0 +1,13 @@
+{
+    "sortOrder": [
+        {
+            "columnIndex": 2,
+            "ascending": true
+        },
+        {
+            "columnIndex": 4,
+            "ascending": false
+        }
+    ],
+    "path": "//minnow.cc.vt.edu/cnre2/TheShark/STUDENTS/Mariana Castaneda-Guzman/03 Sea Grant Project/Data/MODIS/SST/SST_statistical_results/SST_monthly_statistics"
+}

@@ -297,10 +297,22 @@ write.csv(model_results,
           paste0("../Outputs/hypervolumes/model_params_hv_svm.csv"), 
           row.names = FALSE) 
 
+
+model_results <- read.csv("../Outputs/hypervolumes/model_params_hv_svm.csv")
+
 model_results <- model_results %>%  
   mutate(CBP = dbinom(TP_test, 
                       TP_test + FN_test, 
                       total_suitable_area/total_area))
+
+model_results <- model_results %>% 
+  mutate(nu = as.factor(nu), 
+         gamma = as.factor(gamma), 
+         set = as.factor(set), partition = as.factor(partition),
+         CBP_log = log(CBP)) %>% 
+  mutate(CBP_log = ifelse(is.infinite(CBP_log), 
+                          min(model_results$CBP_log[!is.infinite(model_results$CBP_log)]),
+                          CBP_log))
 
 df <- model_results %>% 
   group_by(nu, gamma) %>% 
@@ -321,19 +333,26 @@ ggplot(df,
   scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
 
 
-model_results <- model_results %>% 
-  mutate(nu = as.factor(nu), 
-         gamma = as.factor(gamma), 
-         set = as.factor(set), partition = as.factor(partition),
-         CBP_log = log(CBP)) %>% 
-  mutate(CBP_log = ifelse(is.infinite(CBP_log), 
-                          min(model_results$CBP_log[!is.infinite(model_results$CBP_log)]),
-                          CBP_log))
-
-ggplot(model_results, 
+g1 <- ggplot(model_results, 
        aes(x = nu, y = volume)) +
   geom_boxplot() +
   geom_point(aes(shape = gamma, color = set), position = "jitter")
+g2 <- ggplot(model_results, 
+             aes(x = nu, y = omission_test)) +
+  geom_boxplot() +
+  geom_point(aes(shape = gamma, color = set), position = "jitter")
+g3 <- ggplot(model_results, 
+             aes(x = gamma, y = volume)) +
+  geom_boxplot() +
+  geom_point(aes(shape = nu, color = set), position = "jitter")
+g4 <- ggplot(model_results, 
+             aes(x = gamma, y = omission_test)) +
+  geom_boxplot() +
+  geom_point(aes(shape = nu, color = set), position = "jitter")
+
+
+ggpubr::ggarrange(g1,g2,g3,g4)
+
 
 
 mod <- aov(volume ~ nu, model_results)
@@ -912,6 +931,9 @@ D
 
 # Luego sumar todos los raters, y hacer 1-la suma, para identificar zonas que se
 # han perdido con el tiempo o shifts.
+tmpfilter <- rast(year_models) > 1
+
+filtered_image <- mask(inputimage, tmpfilter, maskvalue=1)
 
 plot(rshift)
 

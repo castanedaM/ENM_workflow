@@ -1,0 +1,26 @@
+{
+    "id": "F9196DF9",
+    "path": "//minnow.cc.vt.edu/cnre2/TheShark/STUDENTS/Mariana Castaneda-Guzman/03 Sea Grant Project/Code/MODIS code/main_code.r",
+    "project_path": "main_code.r",
+    "type": "r_source",
+    "hash": "1052031535",
+    "contents": "",
+    "dirty": false,
+    "created": 1700573711346.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "291,0",
+        "scrollLine": "2"
+    },
+    "folds": "32|23|106|0|\n69|21|84|0|\n89|20|104|0|\n107|18|135|0|\n136|17|171|0|\n172|15|291|0|\n",
+    "lastKnownWriteTime": 1700590126,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1700666088395,
+    "read_only": false,
+    "read_only_alternatives": []
+}

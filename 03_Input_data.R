@@ -1,7 +1,7 @@
 # Title: Clean occurrences with Remotely Sensed Imagery
 # Author: Mariana Castaneda-Guzman
 # Date created: 9/12/2023
-# Date last updated: 3/09/2023
+# Date last updated: 3/18/2023
 
 # Description: Cleaning occurrences one per pixel per year to reduce sampling
 # bias, or inflating the models

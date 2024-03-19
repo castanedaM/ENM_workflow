@@ -32,7 +32,6 @@ names(gbif_data)
 names(gbif_data$meta)
 names(gbif_data$data)
 
-
 table(gbif_data$data$continent)
 table(gbif_data$data$country)
 

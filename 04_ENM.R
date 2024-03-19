@@ -1,7 +1,7 @@
 # Title: ENMs parametrization, hypervolumes, and post-evaluation
 # Author: Mariana Castaneda-Guzman
 # Date created: 10/09/2023
-# Date last updated: 3/15/2024
+# Date last updated: 3/18/2024
 
 # Description: Running Hypervolumes for virginia oysters 
 
@@ -10,8 +10,6 @@ library(terra)
 library(maps)
 library(sf)
 library(usdm)
-# library(stringr)
-# install.packages("ENMeval")
 library(ENMeval)
 library(tidyr)
 library(dplyr)
@@ -53,11 +51,11 @@ env_layers <- lapply(list.files(paste0("../Data/RS_", db, "/"),
 
 env_stack <- rast(env_layers)
 names(env_stack) <- gsub("_summary\\.tif|cropped_", "", basename(sources(env_stack)))
-plot(env_stack)
+# plot(env_stack)
 
 # z-transform climate layers to make axes comparable
 env_layers_scaled <- scale(env_stack, center = TRUE, scale = TRUE)
-plot(env_layers_scaled)
+# plot(env_layers_scaled)
 
 # Identify collinear variables that should be excluded
 vif_cor <- usdm::vifcor(x = env_layers_scaled, th = 0.8)
@@ -68,9 +66,12 @@ vif_cor
 # Make the different set of variables
 
 env_layers_vif <- exclude(env_layers_scaled, vif_cor)
-env_layers_vif <- env_layers_vif[[-which(names(env_layers_vif) == "chlo_sd")]]
-# env_layers_vif <- c(env_layers_vif, 
-                    # env_layers_scaled[["chlo_cropped_range_summary"]])
+
+if(length(which(names(env_layers_vif) == "chlo_sd")) > 0){
+  env_layers_vif <- env_layers_vif[[-which(names(env_layers_vif) == "chlo_sd")]]
+  env_layers_vif <- c(env_layers_vif,
+                      env_layers_scaled[["chlo_range"]])
+}
 
 env_layers_cor1 <- env_layers_scaled[[c("sst_max",
                              "sst_min",
@@ -192,6 +193,8 @@ params
 
 model_results <- data.frame()
 
+set.seed(1234)
+
 for(part in c(1,2)){
   
   if(part == 1){
@@ -237,7 +240,7 @@ for(part in c(1,2)){
       hv_projected_test <- hypervolume_project(hv_train,
                                                env_combos[[set]],
                                     type = "inclusion",
-                                    fast.or.accurate = 'accurate',
+                                    fast.or.accurate = 'fast',
                                     verbose = FALSE)
       
   
@@ -316,21 +319,66 @@ model_results <- model_results %>%
 
 df <- model_results %>% 
   group_by(nu, gamma) %>% 
-  summarise(o_max = max(omission_test),
-         o_mean = mean(omission_test),
-         o_min = min(omission_test),
-         v_max = max(volume), 
-         v_mean = mean(volume),
-         v_min = min(volume))
+  filter(CBP <= 0.001) %>% 
+  mutate(omission_test_sc = (omission_test),
+         volume_sc =  (volume)) %>% 
+  filter(set %in% c(1)) %>% 
+  summarise(o_max = max(omission_test_sc),
+            o_mean = mean(omission_test_sc),
+            o_min = min(omission_test_sc),
+            v_max = max(volume_sc),
+            v_mean = mean(volume_sc),
+            v_min = min(volume_sc))
 
 
-ggplot(df, 
-       aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
+o_sort <- df %>% 
+  arrange(o_mean) 
+o_sort$o_ID <- 1:nrow(o_sort)
+
+v_sort <- df %>% 
+  arrange(v_mean) 
+v_sort$v_ID <- 1:nrow(v_sort)
+
+head(o_sort)
+head(v_sort)
+
+df_sort <- left_join(o_sort, v_sort)
+
+t <- ggplot(df, 
+            aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
   geom_segment(aes(x = o_min, y = v_mean, xend = o_max, yend = v_mean)) +
   geom_segment(aes(x = o_mean, y = v_min, xend = o_mean, yend = v_max)) +
   geom_point(size = 3) +
   ylab("Volume") + xlab("Omission Rate") +
   scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
+
+t
+
+df_sort <- df_sort %>% 
+  mutate(min_sum = v_ID + o_ID) %>% 
+  arrange(min_sum)
+
+op <- df %>% 
+  filter(nu == df_sort$nu[1], 
+         gamma == df_sort$gamma[1]) 
+
+df_sort <- df_sort %>% 
+  group_by(nu, gamma) %>% 
+  mutate(mean_sum = mean(min_sum)) %>% 
+  arrange(mean_sum)
+
+op_mean <-  df %>% 
+  filter(nu == df_sort$nu[1], 
+         gamma == df_sort$gamma[1])  
+
+t +
+  geom_point(data = op, color = "red",
+             pch = 21, size = 6, stroke = 1.5,
+             show.legend = FALSE) +
+  geom_point(data = op_mean, color = "blue",
+             pch = 21, size = 8, stroke = 1.5,
+             show.legend = FALSE)
+
 
 
 g1 <- ggplot(model_results, 
@@ -354,12 +402,10 @@ g4 <- ggplot(model_results,
 ggpubr::ggarrange(g1,g2,g3,g4)
 
 
-
 mod <- aov(volume ~ nu, model_results)
 summary(mod)
 TukeyHSD(mod)
 plot(TukeyHSD(mod), las = 1)
-
 
 ggplot(model_results %>% filter(volume <= 2000, 
                                 omission_test <= 0.2, 
@@ -463,7 +509,6 @@ gamma <- 0.45
 
 set.seed(1234)
 
-
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 occ_combos <- list(occ_extract_vif, occ_extract_cor1, occ_extract_cor2)
 
@@ -482,7 +527,7 @@ for(set in 1:length(occ_combos)){
   # Save hypervolume
   saveRDS(hv, paste0("../Outputs/hypervolumes/set", set, "/hv_svm_", db, ".RDS"))
   
-  for (year in c(2003:2022)){
+  for (year in c(2003:2023)){
     # to keep track of the year being projected
     message(paste0("Set: ", set, "; year: ", year, "; time:", format(Sys.time(), "%X")))
     
@@ -633,6 +678,24 @@ eastern_coastal_states <- c("Connecticut", "Delaware",
 states <- map_data("state")
 states$east_coast <- ifelse(states$region %in%  tolower(eastern_coastal_states), 1, NA)
 
+# For levelplots
+state_polygon <- states %>%
+  st_as_sf(coords = c("long", "lat"), crs = st_crs(mask)) %>%
+  group_by(group) %>%
+  summarise(geometry = st_combine(geometry)) %>%
+  st_cast("POLYGON")
+state_polygon <- sf:::as_Spatial(state_polygon$geometry)
+
+east_state_polygon <- states %>%
+  filter(east_coast == 1) %>% 
+  st_as_sf(coords = c("long", "lat"), crs = st_crs(mask)) %>%
+  group_by(group) %>%
+  summarise(geometry = st_combine(geometry)) %>%
+  st_cast("POLYGON")
+east_state_polygon <- sf:::as_Spatial(east_state_polygon$geometry)
+
+
+
 set <- "set1"
 
 
@@ -642,6 +705,20 @@ year_models <- lapply(list.files(paste0("../Outputs/hypervolumes/", set),
                                  pattern = "hv_svm_map_", 
                                  full.names = TRUE), rast)
 
+year_models <- lapply(year_models,
+                         FUN = function(r){
+                           m <- c(-Inf, 0, 0,
+                                  0, Inf, 1)
+                           rclmat <- matrix(m, ncol=3, byrow=TRUE)
+                           r_rc <- classify(r, rclmat, include.lowest = TRUE)
+                           return(r_rc)
+                         })
+
+
+
+
+
+# year_models <- year_models[-21]
 
 models_summaries <- data.frame()
 latitude_df <- data.frame()
@@ -681,17 +758,41 @@ for(ras in year_models){
 mod_A <- lm(suitability~year, models_summaries)
 summary(mod_A)
 
+fit_changepoint = cpt.mean(df$y)
+
+# Return estimates
+c(ints = param.est(fit_changepoint)$mean,
+  cp = cpts(fit_changepoint))
+
+percent <- format(abs(diff(param.est(fit_changepoint)$mean))/
+  param.est(fit_changepoint)$mean[1] *100, digits = 3)
+
+
+plot(fit_changepoint)
+
 A <- ggplot(models_summaries, aes(x = year, y = suitability)) +
   geom_point() +
   geom_line() +
-  geom_smooth(color = "red", method = "lm") +
-  labs(title = paste0("Adj R2=",signif(summary(mod_A)$adj.r.squared, 3),
-                      " B=",signif(mod_A$coef[[2]], 3),
-                      " P=",signif(summary(mod_A)$coef[2,4], 3))) +
-  xlab("Year") + ylab(expression(italic("C. virginica")~"Predicted Area (km^2)")) +
-  scale_x_continuous(breaks = seq(2003, 2022, 2)) 
+  xlab("Year") + ylab(expression(italic("C. virginica")~"Predicted Area (4"~km^2~")")) +
+  scale_x_continuous(breaks = seq(2003, 2023, 2)) +
+  geom_segment(mapping = aes(x = 2003, y = param.est(fit_changepoint)$mean[1], 
+                             xend = 2011, yend = param.est(fit_changepoint)$mean[1]),
+               color = "red", linewidth = 1) +
+  geom_segment(mapping = aes(x = 2011, y = param.est(fit_changepoint)$mean[2], 
+                             xend = 2023, yend = param.est(fit_changepoint)$mean[2]),
+               color = "red", linewidth = 1) +
+  geom_segment(mapping = aes(x = 2011, y = param.est(fit_changepoint)$mean[1], 
+                             xend = 2011, yend = param.est(fit_changepoint)$mean[2]),
+               color = "red", linetype = 2) +
+  annotate("text", x = 2010, y = 28500, 
+           label = paste0(percent, "%"), color = "red") 
 A
 
+
+tiff(filename = paste0("../Figures/", set, "/figA_(pred_area).tiff"), 
+     width = 7, height = 4, units = "in", res = 300, compression = "lzw")
+A
+dev.off()
 
 mod_B <- lm(mean_lat~year, models_summaries)
 summary(mod_B)
@@ -701,10 +802,16 @@ B <- ggplot(models_summaries, aes(x = year, y = mean_lat)) +
   geom_line() +
   geom_smooth(color = "red", method = "lm") +
   xlab("Year") + ylab("Mean Latitude") +
-  labs(title = paste0("Adj R2=",signif(summary(mod_B)$adj.r.squared, 3),
-                      " B=",signif(mod_B$coef[[2]], 3),
-                      " P=",signif(summary(mod_B)$coef[2,4], 3))) +
-  scale_x_continuous(breaks = seq(2003, 2023, 2)) 
+  annotate("text", x = 2008, y = 31.5,
+           label = substitute(paste("Adj ", R^2, " = ", val1, ", ",
+                                    beta, " = ", val2, " ", italic("p"), " = ",
+                                   val3), 
+                              list(val1 = signif(summary(mod_B)$adj.r.squared, 3), 
+                                               val2 = signif(mod_B$coef[[2]], 3), 
+                                               val3 = signif(summary(mod_B)$coef[2, 4], 3))),
+           color = "red") +
+  scale_x_continuous(breaks = seq(2003, 2023, 2)) +
+  scale_y_continuous(breaks = seq(30, 33, 0.35))
 B
 
 
@@ -716,11 +823,19 @@ B1 <- ggplot(models_summaries, aes(x = year, y = median_lat)) +
   geom_line() +
   geom_smooth(color = "red", method = "lm") +
   xlab("Year") + ylab("Median Latitude") +
-  labs(title = paste0("Adj R2=",signif(summary(mod_B1)$adj.r.squared, 3),
-                      " B=",signif(mod_B1$coef[[2]], 3),
-                      " P=",signif(summary(mod_B1)$coef[2,4], 3))) +
-  scale_x_continuous(breaks = seq(2003, 2023, 2)) 
+  annotate("text", x = 2008, y = 29,
+           label = substitute(paste("Adj ", R^2, " = ", val1, ", ",
+                                    beta, " = ", val2, " ", italic("p"), " = ",
+                                    val3), 
+                              list(val1 = signif(summary(mod_B1)$adj.r.squared, 3), 
+                                   val2 = signif(mod_B1$coef[[2]], 3), 
+                                   val3 = signif(summary(mod_B1)$coef[2, 4], 3))),
+           color = "red") +
+  scale_x_continuous(breaks = seq(2003, 2023, 2)) +
+  scale_y_continuous(breaks = seq(28, 31.5, 0.5))
+
 B1
+
 
 mod_B2 <- lm(mean_lat_x_81~year, models_summaries)
 summary(mod_B2)
@@ -737,10 +852,17 @@ B2 <- ggplot(models_summaries, aes(x = year, y = mean_lat_x_81)) +
 B2
 
 
-ggpubr::ggarrange(B, B1, B2, labels = c("A", "B", "C"), nrow = 3)
+ggpubr::ggarrange(B, B1, labels = c("A", "B"), nrow = 2)
 
 
-# latitude_df <- latitude_df %>% mutate(year = as.factor(year)
+tiff(filename = paste0("../Figures/", set, "/figB_(pred_lat).tiff"), 
+     width = 7, height = 6, units = "in", res = 300, compression = "lzw")
+ggpubr::ggarrange(B, B1, labels = c("A", "B"), nrow = 2)
+dev.off()
+
+
+
+# LATITUDE DENSITIES
 
 mod_B3 <- lm(y~year, latitude_df)
 
@@ -758,12 +880,24 @@ B4 <- ggplot(latitude_df %>%
          mutate(year = as.factor(year)), 
        aes(x = y, y = year, fill = year)) +
   geom_density_ridges() +
-  # theme_ridges() + 
   scale_fill_viridis_d(direction = -1) +
   ylab("Year") + xlab("Latitude") +
-  theme(legend.position = "none")
+  coord_flip() +
+  theme(legend.position = "none") +
+  scale_x_continuous(breaks = seq(20, 50, 5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.9))
 
 B4
+
+
+ggpubr::ggarrange(ggpubr::ggarrange(B, B1, labels = c("A", "B"), nrow = 2),
+                  B4, ncol = 2)
+
+
+tiff(filename = paste0("../Figures/", set, "/figB2_(pred_lat_dens).tiff"), 
+     width = 7, height = 4, units = "in", res = 300, compression = "lzw")
+B4
+dev.off()
 
 
 B5 <- ggplot(latitude_df %>% 
@@ -773,9 +907,15 @@ B5 <- ggplot(latitude_df %>%
   geom_density(alpha = 0.4) +
   scale_fill_viridis_d(direction = -1) +
   scale_x_continuous(breaks = seq(23, 47, 3)) +
-  ylab("Year") + xlab("Latitude") 
-  
+  ylab("Density") + xlab("Latitude")
+
 B5
+
+
+tiff(filename = paste0("../Figures/", set, "/figB3_(pred_lat_dens_3y).tiff"), 
+     width = 7, height = 4, units = "in", res = 300, compression = "lzw")
+B5
+dev.off()
 
 mod_B6 <- aov(y~year, latitude_df %>% mutate(year = as.factor(year)))
 summary(mod_B6)
@@ -784,7 +924,7 @@ mod_B6_Tukey <- TukeyHSD(mod_B6)
 plot(mod_B6_Tukey, las = 1)
 
 
-
+# MAPS
 # Plots
 
 result_df <- lapply(year_models, 
@@ -817,6 +957,23 @@ C <- ggplot( ) +
   labs(fill = "Area", color = "Mean\nLatitude", linetype = "Mean\nLatitude")
 C
 
+
+C_l <- levelplot(year_models[[1]], 
+               xlab = list("Longitude", cex = 2),
+               ylab = list("Latitude", cex = 2),
+               main = list("2003", cex = 2),
+               colorkey = FALSE,
+               scales = list(cex = 1.5),
+               margin = list(draw = TRUE, 
+                             axis = list(col = 'black', fontsize = 13)), 
+               col.regions = c("lightblue", "green4")) + 
+  latticeExtra::layer(sp.polygons(state_polygon, lwd = 1, col='lightgrey')) +
+  latticeExtra::layer(sp.polygons(east_state_polygon, lwd = 1, fill='lightgrey'))
+
+C_l
+
+
+
 # Year 2013
 result_df_2013 <- result_df[[11]] %>% dplyr::filter(result_df[[11]][,3] <= 1)
 
@@ -843,19 +1000,34 @@ C1 <- ggplot( ) +
   labs(fill = "Area", color = "Mean\nLatitude", linetype = "Mean\nLatitude")
 C1
 
-# Year 2022
-result_df_2022 <- result_df[[20]] %>% dplyr::filter(result_df[[20]][,3] <= 1)
+# Levelplot
+C1_l <- levelplot(year_models[[11]], 
+                 xlab = list("Longitude", cex = 2),
+                 ylab = list("Latitude", cex = 2),
+                 main = list("2013", cex = 2),
+                 colorkey = FALSE,
+                 scales = list(cex = 1.5),
+                 margin = list(draw = TRUE, 
+                               axis = list(col = 'black', fontsize = 13)), 
+                 col.regions = c("lightblue", "green4")) + 
+  latticeExtra::layer(sp.polygons(state_polygon, lwd = 1, col='lightgrey')) +
+  latticeExtra::layer(sp.polygons(east_state_polygon, lwd = 1, fill='lightgrey'))
 
-result_df_2022[,3] <- as.factor(result_df_2022[,3])
+C1_l
+
+# Year 2022
+result_df_2023 <- result_df[[20]] %>% dplyr::filter(result_df[[20]][,3] <= 1)
+
+result_df_2023[,3] <- as.factor(result_df_2023[,3])
 
 C2 <- ggplot( ) + 
-  geom_tile(data = result_df_2022,
+  geom_tile(data = result_df_2023,
             aes(x = x, y = y, fill = result_df_2022[,3])) +
   scale_fill_manual(values = c("lightblue", "green4")) +
   geom_polygon(data = states %>% dplyr::filter(!is.na(east_coast)), 
                aes(x = long, y = lat, group = group),
                color = "black", fill = "lightgrey") +
-  geom_hline(models_summaries[c(20,1), ], 
+  geom_hline(models_summaries[c(21,1), ], 
              mapping = aes(yintercept = mean_lat,
                            color = as.factor(year), 
                            linetype = as.factor(year)),
@@ -865,41 +1037,42 @@ C2 <- ggplot( ) +
   scale_x_continuous(breaks = seq(-100, -60, 5)) +
   scale_y_continuous(breaks = seq(23, 47, 3)) +
   coord_fixed(1.3) +
-  ggtitle(sprintf("%d", 2022)) +
+  ggtitle(sprintf("%d", 2023)) +
   labs(fill = "Area", color = "Mean\nLatitude", linetype = "Mean\nLatitude")
 C2
 
+C2_l <- levelplot(year_models[[21]], 
+                  xlab = list("Longitude", cex = 2),
+                  ylab = list("Latitude", cex = 2),
+                  main = list("2023", cex = 2),
+                  colorkey = FALSE,
+                  scales = list(cex = 1.5),
+                  margin = list(draw = TRUE, 
+                                axis = list(col = 'black', fontsize = 13)), 
+                  col.regions = c("lightblue", "green4")) + 
+  latticeExtra::layer(sp.polygons(state_polygon, lwd = 1, col='lightgrey')) +
+  latticeExtra::layer(sp.polygons(east_state_polygon, lwd = 1, fill='lightgrey'))
 
-C_maps <- ggpubr::ggarrange(C, C1, C2, 
-                  # labels = c("B", "B", "C"),
-                  nrow = 1, 
-                  common.legend = TRUE,
-                  legend = "right")
+C2_l
 
-ggpubr::ggarrange(A, B5, C_maps, nrow = 2) 
+C_maps_l <- ggpubr::ggarrange(C_l, C1_l, C2_l, 
+                  nrow = 1)
 
 
-tiff(filename = paste0("../Figures/", set, "/lat_3y_panel.tiff"), 
+tiff(filename = paste0("../Figures/", set, "/figC_l_(maps_3y).tiff"), 
      width = 10, height = 7, units = "in", res = 300, compression = "lzw")
-ggpubr::ggarrange(B5, C_maps, nrow = 2) 
+C_maps_l
 dev.off()
 
 
-G <- ggplot(models_summaries) + 
-  geom_hline(mapping = aes(yintercept = mean_lat,
-                           color = year),
-             linewidth = 2, alpha = 0.7) +
-  scale_color_viridis_c() +
-  ylab("Latitude") +
-  labs(color = "Year")
-G
+C_maps <- ggpubr::ggarrange(C, C1, C2, legend = "right", 
+                            common.legend = TRUE,
+                            nrow = 1)
 
-
-tiff(filename = paste0("../Figures/", set, "/obs_hv_lat_lines.tiff"), 
-     width = 4, height = 4, units = "in", res = 300, compression = "lzw")
-G
+tiff(filename = paste0("../Figures/", set, "/figC_(maps_3y).tiff"), 
+     width = 10, height = 7, units = "in", res = 300, compression = "lzw")
+C_maps
 dev.off()
-
 
 
 # Areas suitable across time
@@ -927,72 +1100,47 @@ D <- ggplot( ) +
   theme(legend.position = "none")
 D
 
+D_l <- levelplot(asat, 
+                  xlab = list("Longitude", cex = 2),
+                  ylab = list("Latitude", cex = 2),
+                  main = list("Areas suitable across time", cex = 2),
+                  colorkey = FALSE,
+                  scales = list(cex = 1.5),
+                  margin = list(draw = TRUE, 
+                                axis = list(col = 'black', fontsize = 13)), 
+                  col.regions = c("lightblue", "green4")) + 
+  latticeExtra::layer(sp.polygons(state_polygon, lwd = 1, col='lightgrey')) +
+  latticeExtra::layer(sp.polygons(east_state_polygon, lwd = 1, fill='lightgrey'))
+
+D_l
 
 
-# Luego sumar todos los raters, y hacer 1-la suma, para identificar zonas que se
+
+# Luego sumar todos los raters,
+# y hacer 1-la suma, para identificar zonas que se
 # han perdido con el tiempo o shifts.
-tmpfilter <- rast(year_models) > 1
 
-filtered_image <- mask(inputimage, tmpfilter, maskvalue=1)
-
+rshift <- 1 - sum(rast(year_models))
 plot(rshift)
 
-asat_df <- as.data.frame(asat, xy = TRUE)
+library(rasterVis)
+library(viridisLite)
 
-asat_df <- asat_df %>% dplyr::filter(asat_df[,3] <= 1)
+revMagma <- rasterTheme(region = rev(magma(10)))
 
-asat_df[,3] <- as.factor(asat_df[,3])
+D2_l <- levelplot(rshift, 
+                 xlab = list("Longitude", cex = 2),
+                 ylab = list("Latitude", cex = 2),
+                 main = list("Shifts across time", cex = 2),
+                 par.settings = revMagma,
+                 scales = list(cex = 1.5),
+                 margin = list(draw = TRUE, 
+                               axis = list(col = 'black', fontsize = 13))) + 
+  latticeExtra::layer(sp.polygons(state_polygon, lwd = 1, col='lightgrey')) +
+  latticeExtra::layer(sp.polygons(east_state_polygon, lwd = 1, fill='lightgrey'))
 
-D <- ggplot( ) + 
-  geom_tile(data = asat_df,
-            aes(x = x, y = y, fill = asat_df[,3])) +
-  scale_fill_manual(values = c("lightblue", "green4")) +
-  geom_polygon(data = states %>% dplyr::filter(!is.na(east_coast)), 
-               aes(x = long, y = lat, group = group),
-               color = "black", fill = "lightgrey") +
-  xlab("Longitude") + ylab("Latitude") +
-  scale_x_continuous(breaks = seq(-100, -60, 5)) +
-  scale_y_continuous(breaks = seq(23, 47, 3)) +
-  coord_fixed(1.3) +
-  ggtitle("Areas suitable across time") +
-  theme(legend.position = "none")
-D
+D2_l
 
-
-# Evaluation --------------------------------------------------------------
-
-
-# Intersection
-hypervolume_set()
-
-# Centroid distance
-hypervolume_distance(type = "centroid")
-
-# Minimum distance
-hypervolume_distance(type = "minumum")
-
-# Minimum distance
-hypervolume_overlap_statistics()
-
-# 
-# library(rgl)
-# 
-# env_points <- as.data.frame(as.points(env_layers_clean))
-# 
-# plot3d( 
-#   x = env_points[,3], 
-#   y = env_points[,4], 
-#   z = env_points[,5], 
-#   type = 's', 
-#   radius = 1,
-#   alpha = 0.5,
-#   xlab = paste0(unlist(stringr::str_split(names(env_points)[3], "_"))[1], "_" , 
-#                 unlist(stringr::str_split(names(env_points)[3], "_"))[3]),
-#   ylab = paste0(unlist(stringr::str_split(names(env_points)[3], "_"))[1], "_" , 
-#                 unlist(stringr::str_split(names(env_points)[4], "_"))[3]), 
-#   zlab = paste0(unlist(stringr::str_split(names(env_points)[3], "_"))[1], "_" , 
-#                 unlist(stringr::str_split(names(env_points)[5], "_"))[3])
-#   )
 
 # More ENMeval function testing ------------------------------------------------
 

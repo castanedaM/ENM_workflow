@@ -1,7 +1,7 @@
 # Title: ENMs parametrization, hypervolumes, and post-evaluation
 # Author: Mariana Castaneda-Guzman
 # Date created: 10/09/2023
-# Date last updated: 3/18/2024
+# Date last updated: 3/20/2024
 
 # Description: Running Hypervolumes for virginia oysters 
 
@@ -33,7 +33,7 @@ occ_points <- readRDS(paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_
 head(occ_points)
 nrow(occ_points)
 
-occ_points <- occ_points %>% filter(year >=2003, year <= 2023)
+occ_points <- occ_points %>% filter(year >= 2003, year <= 2023)
 
 length(unique(occ_points$pixel_index))
 nrow(occ_points)
@@ -131,7 +131,8 @@ if(F){
     # do species distribution modeling
     hv_map <- hypervolume_project(hv,
                                   env_combos[[i]],
-                                  type = "inclusion")
+                                  type = "inclusion", 
+                                  fast.or.accurate = "fast")
     
     
     hv_map_df <- terra::as.data.frame(hv_map, xy = TRUE)
@@ -182,7 +183,7 @@ colnames(bg) <- colnames(occs)
 cb1 <- get.checkerboard1(occs, envs.bg, bg, aggregation.factor=30)
 
 evalplot.grps(pts = occs, pts.grp = cb1$occs.grp, envs = envs.bg)
-# evalplot.grps(pts = bg, pts.grp = cb1$bg.grp, envs = envs.bg)
+evalplot.grps(pts = bg, pts.grp = cb1$bg.grp, envs = envs.bg)
 
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 
@@ -301,6 +302,30 @@ write.csv(model_results,
           row.names = FALSE) 
 
 
+# Figures for parametrization ---------------------------------------------
+
+# Set theme for plots 
+theme_set(theme_bw() +
+            theme(
+              plot.title = element_text(family = "Times", size = 15),
+              
+              axis.title = element_text(family = "Times", size = 15),
+              axis.text = element_text(family = "Times", size = 13),
+              
+              legend.title = element_text(family = "Times", size = 15),
+              legend.text = element_text(family = "Times", size = 13),
+              legend.position = "right",
+              
+              # panel.grid.major.x = element_blank(),
+              # panel.grid.minor.x = element_blank(),
+              # 
+              # panel.grid.major.y = element_line(color = "grey"),
+              # panel.grid.minor.y = element_line(color = "lightgrey"),
+              
+              strip.text.x = element_text(family = "Times", size = 13)
+            )
+)
+
 model_results <- read.csv("../Outputs/hypervolumes/model_params_hv_svm.csv")
 
 model_results <- model_results %>%  
@@ -317,12 +342,66 @@ model_results <- model_results %>%
                           min(model_results$CBP_log[!is.infinite(model_results$CBP_log)]),
                           CBP_log))
 
+
+# Obtain min omission and mean volume
+
+df <- model_results %>% 
+  group_by(nu, gamma) %>% 
+  filter(CBP <= 0.001)
+
+ggplot(df) +
+  geom_point(aes(x = omission_test, y = volume, color = nu, shape = gamma))
+
+o_sort <- df %>% 
+  arrange(omission_test) 
+o_sort$o_ID <- 1:nrow(o_sort)
+
+v_sort <- df %>% 
+  arrange(volume) 
+v_sort$v_ID <- 1:nrow(v_sort)
+
+head(o_sort)
+head(v_sort)
+
+df_sort <- left_join(o_sort, v_sort)
+
+
+df_sort <- df_sort %>% 
+  mutate(min_sum = v_ID + o_ID) %>% 
+  arrange(min_sum)
+
+op <- df %>% 
+  filter(nu == df_sort$nu[1], 
+         gamma == df_sort$gamma[1]) 
+
+df_sort <- df_sort %>% 
+  group_by(nu, gamma) %>% 
+  mutate(mean_sum = mean(min_sum)) %>% 
+  arrange(mean_sum)
+
+op_mean <-  df %>% 
+  filter(nu == df_sort$nu[1], 
+         gamma == df_sort$gamma[1])  
+
+ggplot(df_sort,  aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
+  geom_point() +
+  geom_point(data = op, color = "red",
+             pch = 21, size = 6, stroke = 1.5,
+             show.legend = FALSE) +
+  geom_point(data = op_mean, color = "blue",
+             pch = 21, size = 8, stroke = 1.5,
+             show.legend = FALSE)
+
+
+
+# With stats
+
 df <- model_results %>% 
   group_by(nu, gamma) %>% 
   filter(CBP <= 0.001) %>% 
   mutate(omission_test_sc = (omission_test),
          volume_sc =  (volume)) %>% 
-  filter(set %in% c(1)) %>% 
+  # filter(set %in% c(1,2)) %>%
   summarise(o_max = max(omission_test_sc),
             o_mean = mean(omission_test_sc),
             o_min = min(omission_test_sc),
@@ -358,28 +437,31 @@ df_sort <- df_sort %>%
   mutate(min_sum = v_ID + o_ID) %>% 
   arrange(min_sum)
 
-op <- df %>% 
-  filter(nu == df_sort$nu[1], 
-         gamma == df_sort$gamma[1]) 
+df_sort
+
+min_op <- df_sort %>% 
+  filter(min_sum == min(df_sort$min_sum)) 
 
 df_sort <- df_sort %>% 
   group_by(nu, gamma) %>% 
   mutate(mean_sum = mean(min_sum)) %>% 
   arrange(mean_sum)
 
-op_mean <-  df %>% 
-  filter(nu == df_sort$nu[1], 
-         gamma == df_sort$gamma[1])  
+mean_op <- df_sort %>% 
+  filter(mean_sum == mean(df_sort$mean_sum)) 
+
 
 t +
-  geom_point(data = op, color = "red",
+  geom_point(data = min_op, color = "red",
              pch = 21, size = 6, stroke = 1.5,
              show.legend = FALSE) +
-  geom_point(data = op_mean, color = "blue",
+  geom_point(data = mean_op, color = "blue",
              pch = 21, size = 8, stroke = 1.5,
              show.legend = FALSE)
 
 
+
+# Other plots for parametrization
 
 g1 <- ggplot(model_results, 
        aes(x = nu, y = volume)) +

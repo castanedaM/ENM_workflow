@@ -233,11 +233,10 @@ p1 <- ggplot(og_occ_2 %>%
   labs(fill = "Year")
 p1
 
-tiff(filename = paste0("../Figures/cv_obs_per_state.tiff"), 
-     width = 7, height = 5, units = "in", res = 300, compression = "lzw")
-p1
-dev.off()
-
+# tiff(filename = paste0("../Figures/cv_obs_per_state.tiff"), 
+#      width = 7, height = 5, units = "in", res = 300, compression = "lzw")
+# p1
+# dev.off()
 
 
 p2 <- ggplot(data = east_usa_cv_clean %>% 

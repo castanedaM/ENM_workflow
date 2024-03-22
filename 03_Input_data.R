@@ -1,7 +1,7 @@
 # Title: Clean occurrences with Remotely Sensed Imagery
 # Author: Mariana Castaneda-Guzman
 # Date created: 9/12/2023
-# Date last updated: 3/18/2023
+# Date last updated: 3/20/2023
 
 # Description: Cleaning occurrences one per pixel per year to reduce sampling
 # bias, or inflating the models
@@ -44,6 +44,20 @@ if(!file.exists(paste0("../Data/RS_", db, "/mask_", db, ".tif"))){
   mask <- rast(paste0("../Data/RS_", db, "/mask_" , db, ".tif"))
 }
 
+
+eastern_coastal_states <- c("Connecticut", "Delaware", 
+                            "Florida", "Georgia", "Maine",
+                            "Maryland", "Massachusetts", 
+                            "New Hampshire", "New Jersey",
+                            "New York", "North Carolina", 
+                            "Rhode Island", "South Carolina", "Virginia")
+
+states <- map_data("state")
+states$east_coast <- ifelse(states$region %in%  tolower(eastern_coastal_states), 1, NA)
+
+
+
+
 # With new filtering function ---------------------------------------------
 
 # Occurrences
@@ -69,11 +83,12 @@ if(!file.exists(paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_", db,
   
   og_occ_sp_final_df <- as.data.frame(og_occ_sp_final)
   og_occ_sp_final_df$year <- og_occ$year
+  og_occ_sp_final_df$stateProvince <- og_occ$stateProvince
   
   saveRDS(og_occ_sp_final_df, paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_", db, ".RDS"))
   
   
-  tiff(filename = paste0("../Figures/RS_", db, "/occ_corrected.tiff"), 
+  tiff(filename = paste0("../Figures/occ_corrected.tiff"), 
        width = 5, height = 6, units = "in", compression = "lzw", res = 300)
   
   pts <- st_coordinates(og_occ_sp)
@@ -125,7 +140,7 @@ if(!file.exists(paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_", db,
   points_diff <- pts[diff$diff < 2, ]
   new.pts_diff <- new.pts.df[diff$diff < 2, ]
   
-  tiff(filename = paste0("../Figures/RS_", db, "/occ_diff.tiff"), 
+  tiff(filename = paste0("../Figures/occ_diff.tiff"), 
        width = 5, height = 6, units = "in", compression = "lzw", res = 300)
   # plot(mask, colNA = "lightgrey")
   # plot(as.polygons(mask, na.rm = FALSE, aggregate=FALSE), add=TRUE, border='black', lwd=1)
@@ -188,15 +203,17 @@ og_occ_c <- og_occ_c[which(!is.na(og_occ_c$pixel_index)), ]
 
 table(og_occ_c$year)
 sum(table(og_occ_c$year))
+table(og_occ_c$stateProvince)
 
 # Clean to one per pixel
-length(unique(og_occ_c$pixel_index)) # 871 
+length(unique(og_occ_c$pixel_index)) # 868 
 
 og_occ_unique <- unique(og_occ_c[, c("year", "pixel_index")])
-nrow(og_occ_unique) # unique 2214 
+nrow(og_occ_unique) # unique 2211, 2235 
 
 table(og_occ_unique$year)
 sum(table(og_occ_unique$year))
+table(og_occ_unique$stateProvince)
 
 # remove NAs 
 og_occ_unique <- og_occ_unique[!is.na(og_occ_unique$pixel_index),]
@@ -207,13 +224,10 @@ og_occ_unique <- left_join(og_occ_unique, mask_p, by="pixel_index")
 nrow(og_occ_unique)
 
 # Plot cleaned occurences for each db
-tiff(filename = paste0("../Figures/RS_", db, "/occ_1p.tiff"), 
-     width = 5, height = 6, units = "in", compression = "lzw", res = 300)
-
 plot(mask, colNA = "lightgrey")
 plot(st_as_sf(og_occ_unique, coords = c("x", "y")), pch = 21, col = "black", add = T)
 title("One point per pixel, per year")
-dev.off()
+
 
 # save one per pixel occurrences as R object 
 saveRDS(og_occ_unique, paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_one_per_pixel_", db, ".RDS"))
@@ -242,17 +256,190 @@ og_occ_c <- og_occ_c[which(!is.na(og_occ_c$pixel_index)), ]
 table(og_occ_c$year)
 sum(table(og_occ_c$year))
 
-
 og_occ_agg <- og_occ_c %>% 
   group_by(pixel_index, year) %>% 
   mutate(obs = 1) %>% 
   summarise(obs = sum(obs))
 
 og_occ_unique_agg <- left_join(og_occ_unique, og_occ_agg, by = c("pixel_index", "year"))
+nrow(og_occ_unique_agg)
 
 saveRDS(og_occ_unique_agg, paste0("../Data/GBIF/RS_", db, "/cv_occurrences_corrected_one_per_pixel_weighted_", db, ".RDS"))
 
 # sum(og_occ_unique_agg$obs)
+
+
+# Figures -----------------------------------------------------------------
+
+# Set theme for plots 
+theme_set(theme_bw() +
+            theme(
+              plot.title = element_text(family = "Times", size = 15),
+              
+              axis.title = element_text(family = "Times", size = 15),
+              axis.text = element_text(family = "Times", size = 13),
+              
+              legend.title = element_text(family = "Times", size = 15),
+              legend.text = element_text(family = "Times", size = 13),
+              legend.position = "right",
+              
+              # panel.grid.major.x = element_blank(),
+              # panel.grid.minor.x = element_blank(),
+              # 
+              # panel.grid.major.y = element_line(color = "grey"),
+              # panel.grid.minor.y = element_line(color = "lightgrey"),
+              
+              strip.text.x = element_text(family = "Times", size = 13)
+            )
+)
+
+
+east_usa_cv_clean <- readRDS("../Data/GBIF/cv_occurrences_clean.RDS")
+east_usa_cv_mod <- readRDS("../Data/GBIF/RS_(2003-2023)/cv_occurrences_corrected_one_per_pixel_weighted_(2003-2023).RDS")
+east_usa_cv_states <- readRDS("../Data/GBIF/RS_(2003-2023)/cv_occurrences_corrected_one_per_pixel_per_state_(2003-2023).RDS")
+
+eastern_coastal_states <- c("Connecticut", "Delaware", 
+                            "Florida", "Georgia", "Maine",
+                            "Maryland", "Massachusetts", 
+                            "New Hampshire", "New Jersey",
+                            "New York", "North Carolina", 
+                            "Rhode Island", "South Carolina", "Virginia")
+
+
+
+og_occ_2 <- east_usa_cv_states %>% 
+  filter(year >= 2003, year <= 2023, !is.na(stateProvince)) 
+
+
+p1 <- ggplot(og_occ_2 %>% 
+               group_by(stateProvince, year) %>%
+               mutate(count = 1) %>% 
+               summarise(count = sum(count)), aes(y = reorder(stateProvince, count), x = count)) +
+  geom_boxplot(outliers = FALSE) +
+  geom_point(aes(fill = year), position = "jitter", alpha = 0.75,
+             size = 3, shape = 21, color = "black") +
+  scale_fill_distiller(palette =  "RdYlBu") +
+  ylab("State") + xlab(expression(italic("C. virginica")~"unique reported pixels")) +
+  scale_x_continuous(breaks = seq(0, 100, 15)) +
+  labs(fill = "Year")
+p1
+
+
+
+p2 <- ggplot(data = east_usa_cv_clean %>% 
+               filter(year >= 2003, year <= 2023) %>% 
+               group_by(year) %>% mutate(count = 1) %>% 
+               summarise(count=sum(count)),
+             aes(x = year, y = count)) +
+  geom_bar(stat= "identity", color = "black", fill = "lightgrey") +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1100)) +
+  scale_x_continuous(breaks = seq(2003, 2023, 4)) +
+  xlab("Year") + ylab(expression(~italic("C. virginica")~"individual reports")) +
+  geom_smooth(method = "gam", color = "red", se = F) 
+p2
+
+
+states <- map_data("state")
+states$east_coast <- ifelse(states$region %in%  tolower(eastern_coastal_states), "Study Area", "Contiguous US")
+states$east_coast <- factor(states$east_coast, levels = c("Study Area", "Contiguous US"))
+east_usa_cv_clean$cv.report <- "CV individual report (1847 - 2023)"
+
+p3 <- ggplot() + 
+  geom_polygon(data = states %>% filter(!is.na(east_coast)),
+              mapping = aes(x = long, y = lat, fill = east_coast, group = group), 
+               color = "black") + 
+  coord_fixed(1.3) +
+  scale_fill_manual(values = c("burlywood4", "antiquewhite")) +
+  geom_point(data = east_usa_cv_clean, 
+             aes(x = decimalLongitude, y = decimalLatitude, color = cv.report), 
+             size = 0.5) +
+  scale_color_manual(values = "red") +
+  scale_x_continuous(breaks = seq(-150, -40, 10)) +
+  xlab("Longitude") + ylab("Latitude") +
+  # labs(fill = "", color = "") +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  theme(legend.title = element_blank(), 
+        legend.position = "top")
+p3
+
+
+# to make the in set of map
+p2_3 <- p2 + annotation_custom(ggplotGrob(p3), xmin = 2000, xmax = 2017, 
+                               ymin = 450, ymax = 1000)
+
+p2_3
+
+tiff(filename = paste0("../Figures/cv_obs_per_year_&_map.tiff"), 
+     width = 7, height = 5, units = "in", res = 300, compression = "lzw")
+p2_3
+dev.off()
+
+
+p4 <- ggarrange(ggarrange(p3, p2, labels = c("", "B"), nrow = 1),
+                p1, nrow = 2, labels = c("A", "C"))
+
+p4
+
+tiff(filename = paste0("../Figures/fig1_input_data.tiff"), 
+     width = 14, height = 10, units = "in", res = 300, compression = "lzw")
+p4
+dev.off()
+
+# maps::map(database = "state", 
+#           xlim = range(east_usa_cv_clean$decimalLongitude), 
+#           ylim = range(east_usa_cv_clean$decimalLatitude))
+# maps::map(database = "state",
+#           regions = east,col = "lightgrey",fill=T,add=TRUE)
+# points(east_usa_cv_clean[ , c("decimalLongitude", "decimalLatitude")],
+#        pch = 16, col = east_usa_cv_clean$year,
+#        # cex = log(east_usa_cv_clean$individualCount)/4,
+#        # col = "red",
+#        cex = 0.5)
+
+
+
+p5 <- ggplot(data = east_usa_cv_clean %>% 
+               group_by(year) %>% 
+               filter(year >= 2003) %>% 
+               summarise(individualCount_sum = sum(individualCount)),
+             aes(x = year, y = individualCount_sum)) +
+  geom_bar(stat = "identity") +
+  ylab("individual count") +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(breaks = seq(2003, 2023, 2)) +
+  theme_classic()
+p5
+
+
+nrow(east_usa_cv_clean)
+# table(east_usa_cv_clean$datasetName) 
+
+
+p5 <- ggplot(og_occ_2 %>% 
+               group_by(stateProvince, year) %>%
+               summarise(individualCount = sum(individualCount)), 
+             aes(y = reorder(stateProvince, individualCount), x = individualCount)) +
+  geom_boxplot(outliers = FALSE) +
+  geom_point(aes(fill = year), 
+             alpha = 0.75, size = 3, shape = 21, color = "black") +
+  scale_fill_brewer(palette =  "RdYlBu") +
+  ylab("State") + xlab(expression(italic("C. virginica")~"observations")) +
+  scale_x_continuous(breaks = seq(0, 350, 50), limits = c(0, 350)) +
+  labs(fill = "Year")
+p5
+
+tiff(filename = paste0("../Figures/cv_indv_obs_per_state.tiff"), 
+     width = 7, height = 5, units = "in", res = 300, compression = "lzw")
+p5
+dev.off()
+
+
+
+
+
+
+
+
 
 # # Buffers of Uncertainty --------------------------------------------------
 # 

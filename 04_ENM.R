@@ -1,7 +1,7 @@
 # Title: ENMs parametrization, hypervolumes, and post-evaluation
 # Author: Mariana Castaneda-Guzman
 # Date created: 10/09/2023
-# Date last updated: 3/20/2024
+# Date last updated: 3/25/2024
 
 # Description: Running Hypervolumes for virginia oysters 
 
@@ -187,8 +187,8 @@ evalplot.grps(pts = bg, pts.grp = cb1$bg.grp, envs = envs.bg)
 
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 
-params <- expand.grid(nu = seq(0.005, 0.02, 0.005), 
-                      gamma = seq(0.25, 0.75, 0.10))
+params <- expand.grid(nu = seq(0.005, 0.03, 0.005), 
+                      gamma = seq(0.20, 0.70, 0.10))
 
 params
 
@@ -343,65 +343,96 @@ model_results <- model_results %>%
                           CBP_log))
 
 
-# Obtain min omission and mean volume
-
+# Obtain parameters that minimize omission and volume, and are less than or
+# equal to CBP = 0.001
 df <- model_results %>% 
   group_by(nu, gamma) %>% 
   filter(CBP <= 0.001)
 
 ggplot(df) +
-  geom_point(aes(x = omission_test, y = volume, color = nu, shape = gamma))
+  geom_point(aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
+  scale_color_brewer(palette = "Paired")
 
+# Rank the set of parameters based on their omission 
 o_sort <- df %>% 
   arrange(omission_test) 
 o_sort$o_ID <- 1:nrow(o_sort)
 
+# Rank the set of parameters based on their volume 
 v_sort <- df %>% 
   arrange(volume) 
 v_sort$v_ID <- 1:nrow(v_sort)
 
-head(o_sort)
-head(v_sort)
-
+# Combine both new data frames, that share the same information but the newly
+# created ranking columns for omission and volume
 df_sort <- left_join(o_sort, v_sort)
 
 
+# Sort the data to get the index for the minimum sum between ranks for omission
+# and volume calculated above
 df_sort <- df_sort %>% 
   mutate(min_sum = v_ID + o_ID) %>% 
   arrange(min_sum)
 
-op <- df %>% 
-  filter(nu == df_sort$nu[1], 
-         gamma == df_sort$gamma[1]) 
+# Save parameter combination with the lowest sum
+min_op <- df_sort %>% 
+  filter(min_sum == min(df_sort$min_sum)) 
 
+table(min_op[, c("nu", "gamma")])
+
+# Re sort to calculate a mean value between ranks for omission
+# and volume calculated above
 df_sort <- df_sort %>% 
   group_by(nu, gamma) %>% 
   mutate(mean_sum = mean(min_sum)) %>% 
   arrange(mean_sum)
 
-op_mean <-  df %>% 
-  filter(nu == df_sort$nu[1], 
-         gamma == df_sort$gamma[1])  
+# Save parameter combination with the lowest mean
+mean_op <-  df_sort %>% 
+  filter(mean_sum == mean(df_sort$mean_sum)) 
+
+table(mean_op[, c("nu", "gamma")])
+
+# Run this lines if more than one parameter, but one has highest
+if(F){
+  
+  mean_op_2 <- mean_op %>% 
+    group_by(nu, gamma) %>% 
+    mutate(count = n()) %>% 
+    select(count) %>% 
+    arrange(-count) 
+  
+  mean_op <-  df_sort %>% 
+    filter(nu == mean_op_2$nu[1],
+           gamma == mean_op_2$gamma[1]) 
+  
+}
+
 
 ggplot(df_sort,  aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
   geom_point() +
-  geom_point(data = op, color = "red",
+  scale_color_brewer(palette = "Paired") +
+  geom_point(data = min_op, color = "purple",
              pch = 21, size = 6, stroke = 1.5,
              show.legend = FALSE) +
-  geom_point(data = op_mean, color = "blue",
+  geom_point(data = mean_op, color = "orange",
              pch = 21, size = 8, stroke = 1.5,
-             show.legend = FALSE)
+             show.legend = FALSE) +
+  ylab("Volume") + xlab("Omission Rate") +
+  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05)) 
+  
 
 
 
-# With stats
+# Aggregate the data to calculate a mean, an upper and lower bound for volume
+# and omission to obtain parameters that minimize omission and volume in all
+# model iterations, and are less than or equal to CBP = 0.001.
 
 df <- model_results %>% 
   group_by(nu, gamma) %>% 
   filter(CBP <= 0.001) %>% 
   mutate(omission_test_sc = (omission_test),
          volume_sc =  (volume)) %>% 
-  # filter(set %in% c(1,2)) %>%
   summarise(o_max = max(omission_test_sc),
             o_mean = mean(omission_test_sc),
             o_min = min(omission_test_sc),
@@ -409,55 +440,67 @@ df <- model_results %>%
             v_mean = mean(volume_sc),
             v_min = min(volume_sc))
 
-
+# Rank the set of parameters based on their aggregated omission 
 o_sort <- df %>% 
   arrange(o_mean) 
 o_sort$o_ID <- 1:nrow(o_sort)
 
+# Rank the set of parameters based on their aggregated volume 
 v_sort <- df %>% 
   arrange(v_mean) 
 v_sort$v_ID <- 1:nrow(v_sort)
 
-head(o_sort)
-head(v_sort)
-
+# Combine ranking into one data frame
 df_sort <- left_join(o_sort, v_sort)
 
-t <- ggplot(df, 
-            aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
+ggplot(df, aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
   geom_segment(aes(x = o_min, y = v_mean, xend = o_max, yend = v_mean)) +
   geom_segment(aes(x = o_mean, y = v_min, xend = o_mean, yend = v_max)) +
   geom_point(size = 3) +
+  scale_color_brewer(palette = "Paired") +
   ylab("Volume") + xlab("Omission Rate") +
   scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
 
-t
 
+# Sort the data to get the index for the minimum sum between ranks for omission
+# and volume calculated above
 df_sort <- df_sort %>% 
   mutate(min_sum = v_ID + o_ID) %>% 
   arrange(min_sum)
 
-df_sort
-
+# Save parameter combination with the lowest sum
 min_op <- df_sort %>% 
   filter(min_sum == min(df_sort$min_sum)) 
 
+table(min_op[, c("nu", "gamma")])
+
+
+# Re sort to calculate a mean value between ranks for omission
+# and volume calculated above
 df_sort <- df_sort %>% 
   group_by(nu, gamma) %>% 
-  mutate(mean_sum = mean(min_sum)) %>% 
+  mutate(mean_sum = mean(v_ID) + mean(o_ID)) %>% 
   arrange(mean_sum)
 
+# Save parameter combination with the lowest aggregated mean
 mean_op <- df_sort %>% 
   filter(mean_sum == mean(df_sort$mean_sum)) 
 
+table(mean_op[, c("nu", "gamma")])
 
-t +
-  geom_point(data = min_op, color = "red",
+ggplot(df, aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
+  geom_segment(aes(x = o_min, y = v_mean, xend = o_max, yend = v_mean)) +
+  geom_segment(aes(x = o_mean, y = v_min, xend = o_mean, yend = v_max)) +
+  geom_point(size = 3) +
+  scale_color_brewer(palette = "Paired") +
+  ylab("Volume") + xlab("Omission Rate") +
+  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05)) +
+  geom_point(data = min_op, color = "purple",
              pch = 21, size = 6, stroke = 1.5,
-             show.legend = FALSE) +
-  geom_point(data = mean_op, color = "blue",
-             pch = 21, size = 8, stroke = 1.5,
-             show.legend = FALSE)
+             show.legend = FALSE) 
+  # geom_point(data = mean_op, color = "orange",
+  #            pch = 21, size = 8, stroke = 1.5,
+  #            show.legend = FALSE)
 
 
 

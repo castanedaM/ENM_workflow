@@ -1,9 +1,13 @@
 # Title: ENMs parametrization, hypervolumes, and post-evaluation
 # Author: Mariana Castaneda-Guzman
 # Date created: 10/09/2023
-# Date last updated: 3/25/2024
+# Date last updated: 3/28/2024
 
 # Description: Running Hypervolumes for virginia oysters 
+
+
+# Packages ----------------------------------------------------------------
+
 
 library(hypervolume)
 library(terra)
@@ -103,9 +107,11 @@ head(occ_extract_cor2)
 nrow(occ_extract_cor2)
 
 
-# Test Combination of Env. Vars -------------------------------------------
+# Test Combination of Env. Vars ------------------------------------------- This
 
-# Variables
+# This is an optional step, just hepls visualize the general results you might
+# get with all the variables Variables
+
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 occ_combos <- list(occ_extract_vif, occ_extract_cor1, occ_extract_cor2)
 
@@ -175,35 +181,53 @@ if(F){
 
 set.seed(12345) # to be able to replicate your random draws
 
+# Selecting calbration and evaluation sets
+
+# Using the package ENMeval to select sets
+
+# Enviroemtnal background
 envs.bg <- env_layers_vif
+
+# Make occurences a matrix with two columns (lat and long)
 occs <- st_coordinates(occ_coords)
+
+# Select a random sample as your background points
 bg <- dismo::randomPoints(env_layers_vif[[1]], n = 10000) %>% as.data.frame()
 colnames(bg) <- colnames(occs)
 
-cb1 <- get.checkerboard1(occs, envs.bg, bg, aggregation.factor=30)
+# Get your 2-folds for validation and calibration 
+folds <- get.checkerboard1(occs, envs.bg, bg, aggregation.factor=30)
 
-evalplot.grps(pts = occs, pts.grp = cb1$occs.grp, envs = envs.bg)
-evalplot.grps(pts = bg, pts.grp = cb1$bg.grp, envs = envs.bg)
+# Plotting
+evalplot.grps(pts = occs, pts.grp = folds$occs.grp, envs = envs.bg)
+evalplot.grps(pts = bg, pts.grp = folds$bg.grp, envs = envs.bg)
 
+
+# Set up parametrization loop 
+
+# Environmental sets, with different sets of environmental layers
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 
-params <- expand.grid(nu = seq(0.005, 0.03, 0.005), 
-                      gamma = seq(0.20, 0.70, 0.10))
+# Parameters to test. Change based on preference. This runs 380 combinations,
+# and includes default hypervolume parameters nu = 0.01 and gamma = 0.5
+params <- expand.grid(nu = seq(0.005, 0.1, 0.005), 
+                      gamma = seq(0.1, 1, 0.05))
 
 params
 
 model_results <- data.frame()
 
 set.seed(1234)
+message(paste0("Start time: ", format(Sys.time(), "%X")))
 
 for(part in c(1,2)){
   
   if(part == 1){
-    data_sf_train <- occ_coords[cb1$occs.grp == 1, ] 
-    data_sf_test <- occ_coords[cb1$occs.grp == 2, ] 
+    data_sf_train <- occ_coords[folds$occs.grp == 1, ] 
+    data_sf_test <- occ_coords[folds$occs.grp == 2, ] 
   }else{
-    data_sf_train <- occ_coords[cb1$occs.grp == 2, ] 
-    data_sf_test <- occ_coords[cb1$occs.grp == 1, ] 
+    data_sf_train <- occ_coords[folds$occs.grp == 2, ] 
+    data_sf_test <- occ_coords[folds$occs.grp == 1, ] 
   }
   
   e_space_train_vif <- raster::extract(env_layers_vif, data_sf_train)
@@ -296,13 +320,14 @@ for(part in c(1,2)){
   model_results <- rbind(model_results, sub_model_results)
 }
 
+message(paste0("End time: ", format(Sys.time(), "%X")))
 
 write.csv(model_results, 
           paste0("../Outputs/hypervolumes/model_params_hv_svm.csv"), 
           row.names = FALSE) 
 
 
-# Figures for parametrization ---------------------------------------------
+# Figures for Parametrization ---------------------------------------------
 
 # Set theme for plots 
 theme_set(theme_bw() +
@@ -316,16 +341,11 @@ theme_set(theme_bw() +
               legend.text = element_text(family = "Times", size = 13),
               legend.position = "right",
               
-              # panel.grid.major.x = element_blank(),
-              # panel.grid.minor.x = element_blank(),
-              # 
-              # panel.grid.major.y = element_line(color = "grey"),
-              # panel.grid.minor.y = element_line(color = "lightgrey"),
-              
               strip.text.x = element_text(family = "Times", size = 13)
             )
 )
 
+# Read in Parametrization
 model_results <- read.csv("../Outputs/hypervolumes/model_params_hv_svm.csv")
 
 model_results <- model_results %>%  
@@ -338,296 +358,260 @@ model_results <- model_results %>%
          gamma = as.factor(gamma), 
          set = as.factor(set), partition = as.factor(partition),
          CBP_log = log(CBP)) %>% 
+  # SALEN NEGATIVOS
   mutate(CBP_log = ifelse(is.infinite(CBP_log), 
                           min(model_results$CBP_log[!is.infinite(model_results$CBP_log)]),
                           CBP_log))
 
 
 # Obtain parameters that minimize omission and volume, and are less than or
-# equal to CBP = 0.001
+# equal to CBP = 0.001. Also aggregate data per eneviromatal layer set.
 df <- model_results %>% 
-  group_by(nu, gamma) %>% 
-  filter(CBP <= 0.001)
+  group_by(nu, gamma, set) %>% 
+  filter(CBP <= 0.001) %>% 
+  summarise(omission_test = mean(omission_test),
+            volume = mean(volume))
 
+# Models should have been reduce by at least a factor of 2
+nrow(df)
+
+# Plot scatter plot
 ggplot(df) +
-  geom_point(aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
-  scale_color_brewer(palette = "Paired")
+  geom_point(aes(x = omission_test, y = volume)) 
 
-# Rank the set of parameters based on their omission 
-o_sort <- df %>% 
-  arrange(omission_test) 
-o_sort$o_ID <- 1:nrow(o_sort)
+# # If you are running less that 6 different nu and 6 different gammas this plot
+# # is prettier
+# ggplot(df) + 
+#   geom_point(aes(x = omission_test, y = volume, 
+#                  color = nu, shape = gamma)) +
+#   scale_color_brewer(palette = "Paired")
 
-# Rank the set of parameters based on their volume 
-v_sort <- df %>% 
-  arrange(volume) 
-v_sort$v_ID <- 1:nrow(v_sort)
+# Given that you want to minimize x (omission_test) and y (volume), you need to
+# find a way to combine these two variables into a single objective function
+# that you can minimize. Here's one possible approach:
 
-# Combine both new data frames, that share the same information but the newly
-# created ranking columns for omission and volume
-df_sort <- left_join(o_sort, v_sort)
+# 1. Scale Variables (many many options):
+
+# 1.1 Normalizing Transformation: You can use min-max scaling to bring both
+# variables to the range [0, 1].
+
+# 1.2 Rank Transformation: Instead of normalizing, you could rank the values of each
+# variable. This transformation preserves the order of the data while making it
+# less sensitive to extreme values. After ranking, you can then use the ranked
+# values to create an objective function for minimization.
+
+# 2. Combine the Variables: Once the variables are on the same scale, you can
+# combine them into a single objective function. Since you want to minimize both
+# variables, you can simply add them together. However, you might need to adjust
+# the weights if one variable is more important than the other.
 
 
-# Sort the data to get the index for the minimum sum between ranks for omission
-# and volume calculated above
-df_sort <- df_sort %>% 
-  mutate(min_sum = v_ID + o_ID) %>% 
-  arrange(min_sum)
+# Rank transformation
+df_trans <- df 
+df_trans$omission_t <- rank(df$omission_test, ties.method = "min")
+df_trans$volume_t <- rank(df$volume, ties.method = "min")
+
+# Plot scatter plot
+ggplot(df_trans) +
+  geom_point(aes(x = omission_t, y = volume_t)) 
+
+# Calculate the objective function, your objective function can change depending
+# on what you are looking for you might need to adjust the weights if one
+# variable is more important than the other. Eg. multiple omission * 2
+
+df_trans <- df_trans %>% 
+  mutate(obj_fun = omission_t + volume_t) %>% 
+  arrange(obj_fun)
 
 # Save parameter combination with the lowest sum
-min_op <- df_sort %>% 
-  filter(min_sum == min(df_sort$min_sum)) 
+min_op <- df_trans %>% 
+  dplyr::filter(obj_fun == min(df_trans$obj_fun)) 
 
-table(min_op[, c("nu", "gamma")])
+# table(min_op[, c("nu", "gamma")])
 
-# Re sort to calculate a mean value between ranks for omission
-# and volume calculated above
-df_sort <- df_sort %>% 
-  group_by(nu, gamma) %>% 
-  mutate(mean_sum = mean(min_sum)) %>% 
-  arrange(mean_sum)
-
-# Save parameter combination with the lowest mean
-mean_op <-  df_sort %>% 
-  filter(mean_sum == mean(df_sort$mean_sum)) 
-
-table(mean_op[, c("nu", "gamma")])
-
-# Run this lines if more than one parameter, but one has highest
-if(F){
-  
-  mean_op_2 <- mean_op %>% 
-    group_by(nu, gamma) %>% 
-    mutate(count = n()) %>% 
-    select(count) %>% 
-    arrange(-count) 
-  
-  mean_op <-  df_sort %>% 
-    filter(nu == mean_op_2$nu[1],
-           gamma == mean_op_2$gamma[1]) 
-  
-}
-
-
-ggplot(df_sort,  aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
+A <- ggplot(df_trans, aes(x = omission_t, y = volume_t)) +
   geom_point() +
-  scale_color_brewer(palette = "Paired") +
-  geom_point(data = min_op, color = "purple",
-             pch = 21, size = 6, stroke = 1.5,
-             show.legend = FALSE) +
-  geom_point(data = mean_op, color = "orange",
-             pch = 21, size = 8, stroke = 1.5,
-             show.legend = FALSE) +
-  ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05)) 
+  geom_point(data = min_op, aes(color = nu, shape = gamma),
+             size = 3) +
+  scale_color_brewer(palette = "Set1") +
+  ylab("Volume (Rank Transformed)") + 
+  xlab("Omission Rate (Rank Transformed)") 
   
 
-
-
-# Aggregate the data to calculate a mean, an upper and lower bound for volume
-# and omission to obtain parameters that minimize omission and volume in all
-# model iterations, and are less than or equal to CBP = 0.001.
-
-df <- model_results %>% 
-  group_by(nu, gamma) %>% 
-  filter(CBP <= 0.001) %>% 
-  mutate(omission_test_sc = (omission_test),
-         volume_sc =  (volume)) %>% 
-  summarise(o_max = max(omission_test_sc),
-            o_mean = mean(omission_test_sc),
-            o_min = min(omission_test_sc),
-            v_max = max(volume_sc),
-            v_mean = mean(volume_sc),
-            v_min = min(volume_sc))
-
-# Rank the set of parameters based on their aggregated omission 
-o_sort <- df %>% 
-  arrange(o_mean) 
-o_sort$o_ID <- 1:nrow(o_sort)
-
-# Rank the set of parameters based on their aggregated volume 
-v_sort <- df %>% 
-  arrange(v_mean) 
-v_sort$v_ID <- 1:nrow(v_sort)
-
-# Combine ranking into one data frame
-df_sort <- left_join(o_sort, v_sort)
-
-ggplot(df, aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
-  geom_segment(aes(x = o_min, y = v_mean, xend = o_max, yend = v_mean)) +
-  geom_segment(aes(x = o_mean, y = v_min, xend = o_mean, yend = v_max)) +
-  geom_point(size = 3) +
-  scale_color_brewer(palette = "Paired") +
+B <- ggplot(df_sort,  aes(x = omission_test, y = volume)) +
+  geom_point() +
+  geom_point(data = min_op, aes(color = nu, shape = gamma),
+             size = 3) +
   ylab("Volume") + xlab("Omission Rate") +
+  scale_color_brewer(palette = "Set1") +
   scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
 
-
-# Sort the data to get the index for the minimum sum between ranks for omission
-# and volume calculated above
-df_sort <- df_sort %>% 
-  mutate(min_sum = v_ID + o_ID) %>% 
-  arrange(min_sum)
-
-# Save parameter combination with the lowest sum
-min_op <- df_sort %>% 
-  filter(min_sum == min(df_sort$min_sum)) 
-
-table(min_op[, c("nu", "gamma")])
+ggpubr::ggarrange(A, B, common.legend = TRUE)
 
 
-# Re sort to calculate a mean value between ranks for omission
-# and volume calculated above
-df_sort <- df_sort %>% 
-  group_by(nu, gamma) %>% 
-  mutate(mean_sum = mean(v_ID) + mean(o_ID)) %>% 
-  arrange(mean_sum)
+# Save high resolution figure
+tiff(filename = "../Figures/optimal_param.tiff", 
+     width = 10, height = 5, units = "in", 
+     compression = "lzw", res = 300)
+ggpubr::ggarrange(A, B, labels = c("A", "B"),
+                  common.legend = TRUE)
 
-# Save parameter combination with the lowest aggregated mean
-mean_op <- df_sort %>% 
-  filter(mean_sum == mean(df_sort$mean_sum)) 
+dev.off()
 
-table(mean_op[, c("nu", "gamma")])
+# Visualize all sets
+in_all_sets <- df_trans %>% 
+  dplyr::filter(nu == min_op$nu, gamma == min_op$gamma)
 
-ggplot(df, aes(x = o_mean, y = v_mean, color = nu, shape = gamma)) +
-  geom_segment(aes(x = o_min, y = v_mean, xend = o_max, yend = v_mean)) +
-  geom_segment(aes(x = o_mean, y = v_min, xend = o_mean, yend = v_max)) +
-  geom_point(size = 3) +
+
+C <- ggplot(df_trans, aes(x = omission_t, y = volume_t)) +
+  geom_point() +
+  geom_point(data = in_all_sets, aes(color = set),
+             size = 3) +
   scale_color_brewer(palette = "Paired") +
+  ylab("Volume (Rank Transformed)") + 
+  xlab("Omission Rate (Rank Transformed)") 
+
+
+D <- ggplot(df_sort,  aes(x = omission_test, y = volume)) +
+  geom_point() +
+  geom_point(data = in_all_sets, aes(color = set),
+             size = 3) +
   ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05)) +
-  geom_point(data = min_op, color = "purple",
-             pch = 21, size = 6, stroke = 1.5,
-             show.legend = FALSE) 
-  # geom_point(data = mean_op, color = "orange",
-  #            pch = 21, size = 8, stroke = 1.5,
-  #            show.legend = FALSE)
+  scale_color_brewer(palette = "Paired") +
+  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
+
+ggpubr::ggarrange(C, D, common.legend = TRUE)
+
+
+# Save high resolution figure
+tiff(filename = "../Figures/optimal_param_set.tiff", 
+     width = 10, height = 5, units = "in", 
+     compression = "lzw", res = 300)
+ggpubr::ggarrange(C, D, labels = c("A", "B"),
+                  common.legend = TRUE)
+
+dev.off()
 
 
 
 # Other plots for parametrization
 
+# Plots to show distribution of volume and omission per parameter
 g1 <- ggplot(model_results, 
        aes(x = nu, y = volume)) +
-  geom_boxplot() +
-  geom_point(aes(shape = gamma, color = set), position = "jitter")
+  geom_boxplot(aes(color = set)) +
+  scale_color_brewer(palette = "Paired") +
+  ylab("Volume") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+g1
+
 g2 <- ggplot(model_results, 
              aes(x = nu, y = omission_test)) +
-  geom_boxplot() +
-  geom_point(aes(shape = gamma, color = set), position = "jitter")
+  geom_boxplot(aes(color = set)) +
+  scale_color_brewer(palette = "Paired") +
+  ylab("Omission Rate") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+g2
+
 g3 <- ggplot(model_results, 
              aes(x = gamma, y = volume)) +
-  geom_boxplot() +
-  geom_point(aes(shape = nu, color = set), position = "jitter")
+  geom_boxplot(aes(color = set)) +
+  scale_color_brewer(palette = "Paired") +
+  ylab("Volume") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+g3
+
 g4 <- ggplot(model_results, 
              aes(x = gamma, y = omission_test)) +
-  geom_boxplot() +
-  geom_point(aes(shape = nu, color = set), position = "jitter")
+  geom_boxplot(aes(color = set)) +
+  scale_color_brewer(palette = "Paired") +
+  ylab("Omission Rate") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+g4
 
 
-ggpubr::ggarrange(g1,g2,g3,g4)
+ggpubr::ggarrange(g1,g2,g3,g4, 
+                  ncol = 1, 
+                  labels = c("A", "B", "C", "D"),
+                  common.legend = TRUE)
 
+tiff(filename = "../Figures/param_bh.tiff", width = 8, height = 11, 
+     units = "in", compression = "lzw", res = 300)
+ggpubr::ggarrange(g1,g2,g3,g4, 
+                  ncol = 1, 
+                  labels = c("A", "B", "C", "D"),
+                  common.legend = TRUE)
+dev.off()
 
+# Anova and Tukey's test to check if there are significant differences
 mod <- aov(volume ~ nu, model_results)
-summary(mod)
+summary(mod) #no
+
+mod <- aov(omission_test ~ nu, model_results)
+summary(mod) #no
+
+mod <- aov(volume ~ gamma, model_results)
+summary(mod) #yes
 TukeyHSD(mod)
+
+mod <- aov(omission_test ~ gamma, model_results)
+summary(mod) #yes
+TukeyHSD(mod)
+
+# Plot Tukey's test
 plot(TukeyHSD(mod), las = 1)
 
-ggplot(model_results %>% filter(volume <= 2000, 
-                                omission_test <= 0.2, 
-                                CBP <= 0.001, set != 3),
-            aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
-  geom_point() +
-  ylab("Volume") + xlab("Omission Rate")
 
-
-a <- ggplot(model_results, 
+# OTHER PLOTS
+A <- ggplot(model_results, 
        aes(x = omission_test, y = volume, color = set)) +
   geom_point() +
   ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05)) +
-  scale_color_brewer(palette = "Set1") +
-  labs(color = "Env. Set")
-a
+  scale_x_continuous(breaks = seq(0.05, 0.5, 0.05)) +
+  scale_color_brewer(palette = "Paired")
+  # labs(color = "Env. Set")
+A
 
-b <- ggplot(model_results, 
-            aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
-  geom_point() +
-  ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
-
-b
+tiff(filename = "../Figures/mod_res_set.tiff", width = 7, height = 4, 
+     units = "in", compression = "lzw", res = 300)
+A
+dev.off()
 
 
-c <- ggplot(model_results %>% 
-              filter(CBP <= 0.001) %>% 
-              mutate(nu = as.factor(nu), gamma = as.factor(gamma)), 
-            aes(x = omission_test, y = volume, size = CBP_log, color = CBP_log)) +
-  geom_point(alpha = 0.75) +
-  scale_color_distiller(palette = "Greens") +
-  ylab("Volume") + xlab("Omission Rate") +
-  theme_bw()
-c
-
-
-c2 <- ggplot(model_results %>% 
-              filter(CBP_log <= -600, volume <= 2000, omission_test <= 0.20) %>% 
-              mutate(nu = as.factor(nu), gamma = as.factor(gamma)), 
-            aes(x = CBP_log, y = volume, color = nu, shape = gamma)) +
-  geom_point(alpha = 0.75) +
-  # scale_color_distiller(palette = "Reds") +
-  ylab("Volume") + xlab("CBP (log)") +
-  theme_bw()
-c2
-
-e <- ggplot(model_results %>% 
-              filter(CBP_log <= -650), 
-            aes(x = omission_test, y = volume, size = CBP_log, color = CBP_log)) +
-  geom_point() +
-  ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.05, 0.4, 0.05))
-e
-
-
-d <- ggplot(model_results %>% 
-              filter(volume <= 2000, CBP <= 0.001, 
-                     set != 3, 
-                     omission_test <= 0.20), 
-            aes(x = omission_test, y = volume, color = nu, shape = gamma)) +
-  geom_point() +
-  ylab("Volume") + xlab("Omission Rate") +
-  scale_x_continuous(breaks = seq(0.1, 0.2, 0.05)) +
-  facet_wrap(~partition)
-d
-
-ggpubr::ggarrange(ggpubr::ggarrange(a, b), c, nrow = 2)
-
-
-# g1 <- model_results %>% filter(set == 1, nu == 0.02, gamma == 0.45)
-# geom_point(data=g1, colour="blue") +
-
-
-
-ggpubr::ggarrange(a, b, e, d, labels = c("A", "B", "C", "D"))
-
-model_results <- model_results %>%  
-  mutate(NCBP = dnbinom(FN_test, 
-                        TP_test, 
-                        total_suitable_area/total_area))
-
-ggplot(model_results, aes(x = NCBP, y = volume)) +
-  geom_point()
+# model_results <- model_results %>%  
+#   mutate(NCBP = dnbinom(FN_test, 
+#                         TP_test, 
+#                         total_suitable_area/total_area))
+# 
+# ggplot(model_results, aes(x = NCBP, y = volume)) +
+#   geom_point()
 
 
 # Hypervolumes per year ---------------------------------------------------
 
-# STEP 1: specify the parameters to use and method to use
-# nu <- 0.005
-# gamma <- 0.3
-method <- "svm"
+# Run your hypervolume based on the chosen parameters. Default svm.nu = 0.01,
+# svm.gamma = 0.5
 
-# svm.nu = 0.01, svm.gamma = 0.5
-nu <- 0.01
-gamma <- 0.45
+
+# STEP 1: specify the parameters to use and method to use, and set of varibales
+
+min_op
+
+method <- "svm"
+set <- 2
+# if more than one just add in c() list, loop is set up to work with more than
+# one combination
+param_combo <- data.frame(nu = 0.065,
+                          gamma = 0.5)
+
 
 # Specify the number of variables to use
 # STEP 2:
@@ -637,135 +621,108 @@ set.seed(1234)
 env_combos <- list(env_layers_vif, env_layers_cor1, env_layers_cor2)
 occ_combos <- list(occ_extract_vif, occ_extract_cor1, occ_extract_cor2)
 
-
-# STEP 3: project to each year
-for(set in 1:length(occ_combos)){
+for(combo in 1:length(param_combo)){
   
-  message(paste0("Set: ", set, "; start time: ", format(Sys.time(), "%X")))
-  
-  # Create the main hypervolume
-  hv <- hypervolume_svm(data = occ_combos[[set]],
-                        svm.nu = nu,
-                        svm.gamma = gamma,
-                        verbose = FALSE)
-  
-  # Save hypervolume
-  saveRDS(hv, paste0("../Outputs/hypervolumes/set", set, "/hv_svm_", db, ".RDS"))
-  
-  for (year in c(2003:2023)){
-    # to keep track of the year being projected
-    message(paste0("Set: ", set, "; year: ", year, "; time:", format(Sys.time(), "%X")))
+  # STEP 3: project to each year
+  for(set in 1:length(occ_combos)){
     
+    message(paste0("Param combo: ", combo, "; Set: ", set, "; Start time: ", format(Sys.time(), "%X")))
     
-    # List all important variables
-    if(set == 1){
-      vars <- c("CHLO_%d_min.tif",
-                "CHLO_%d_range.tif",
-                "SST_%d_max.tif",
-                "SST_%d_min.tif",
-                "SST_%d_range.tif")
-    }else if(set == 2){
-      vars <- c("CHLO_%d_max.tif",
-                "CHLO_%d_min.tif",
-                "SST_%d_max.tif",
-                "SST_%d_min.tif",
-                "SST_%d_range.tif")
-    }else{
-      vars <- c("CHLO_%d_mean.tif",
-                "CHLO_%d_min.tif",
-                "CHLO_%d_range.tif",
-                "SST_%d_mean.tif",
-                "SST_%d_sd.tif")
+    # Create the main hypervolume
+    hv <- hypervolume_svm(data = occ_combos[[set]],
+                          svm.nu = param_combo$nu[combo],
+                          svm.gamma = param_combo$gamma[combo],
+                          verbose = FALSE)
+    
+    # Save hypervolume
+    saveRDS(hv, paste0("../Outputs/hypervolumes/hv_svm_set_", set,
+                       "_nu_", param_combo$nu[combo] , 
+                       "_gamma_", param_combo$gamma[combo], 
+                       "_", db, ".RDS"))
+    
+    for (year in c(2003:2023)){
+      # to keep track of the year being projected
+      message(paste0("Set: ", set, "; year: ", year, "; time:", format(Sys.time(), "%X")))
+      
+      
+      # List all important variables
+      if(set == 1){
+        vars <- c("CHLO_%d_min.tif",
+                  "CHLO_%d_range.tif",
+                  "SST_%d_max.tif",
+                  "SST_%d_min.tif",
+                  "SST_%d_range.tif")
+      }else if(set == 2){
+        vars <- c("CHLO_%d_max.tif",
+                  "CHLO_%d_min.tif",
+                  "SST_%d_max.tif",
+                  "SST_%d_min.tif",
+                  "SST_%d_range.tif")
+      }else{
+        vars <- c("CHLO_%d_mean.tif",
+                  "CHLO_%d_min.tif",
+                  "CHLO_%d_range.tif",
+                  "SST_%d_mean.tif",
+                  "SST_%d_sd.tif")
+      }
+      
+      # List all the files in the directory, this will help subset in the loop
+      vars_files <- list.files(path = "../Data/RS_(2003-2023)/", 
+                               patter = "\\.tif$", 
+                               recursive = TRUE, 
+                               full.names = TRUE)
+      
+      # Assign variable names, this are going to be used as column names in the line
+      # below
+      # List all important variables
+      if(set == 1){
+        vars_name <- c("CHLO_min",
+                       "CHLO_range",
+                       "SST_max",
+                       "SST_min",
+                       "SST_range")
+      }else if(set == 2){
+        vars_name <- c("CHLO_max",
+                       "CHLO_min",
+                       "SST_max",
+                       "SST_min",
+                       "SST_range")
+      }else{
+        vars_name <- c("CHLO_mean",
+                       "CHLO_min",
+                       "CHLO_range",
+                       "SST_mean",
+                       "SST_sd")
+      }
+      
+      # stack all environmental layers for the given year
+      env <- raster::stack(vars_files[which(basename(vars_files) %in% sprintf(vars, year))])
+      names(env) <- vars_name
+      
+      env_layers_clean <- scale(env, center = TRUE, scale = TRUE)
+      
+      
+      # create hypervolume projection
+      result <- hypervolume_project(hv,
+                                    env_layers_clean,
+                                    type = "inclusion",
+                                    fast.or.accurate='accurate',
+                                    verbose = FALSE)
+      
+      
+      # Write the resulting projection in G space
+      writeRaster(x = result,
+                  filename = paste0("../Outputs/hypervolumes/set", set, 
+                  "/hv_svm_nu_", param_combo$nu[combo], 
+                  "_gamma_",  param_combo$gamma[combo], 
+                  "_map_", year, ".tif"),
+                  overwrite = TRUE)
     }
     
-    # List all the files in the directory, this will help subset in the loop
-    vars_files <- list.files(path = "../Data/RS_(2003-2023)/", 
-                             patter = "\\.tif$", 
-                             recursive = TRUE, 
-                             full.names = TRUE)
+    message(paste0("Param combo: ", combo, "; Set: ", set, "; End time: ", format(Sys.time(), "%X")))
     
-    # Assign variable names, this are going to be used as column names in the line
-    # below
-    # List all important variables
-    if(set == 1){
-      vars_name <- c("CHLO_min",
-                     "CHLO_range",
-                     "SST_max",
-                     "SST_min",
-                     "SST_range")
-    }else if(set == 2){
-      vars_name <- c("CHLO_max",
-                     "CHLO_min",
-                     "SST_max",
-                     "SST_min",
-                     "SST_range")
-    }else{
-      vars_name <- c("CHLO_mean",
-                     "CHLO_min",
-                     "CHLO_range",
-                     "SST_mean",
-                     "SST_sd")
-    }
-    
-    # stack all environmental layers for the given year
-    env <- raster::stack(vars_files[which(basename(vars_files) %in% sprintf(vars, year))])
-    names(env) <- vars_name
-    
-    env_layers_clean <- scale(env, center = TRUE, scale = TRUE)
-    
-    
-    # create hypervolume projection
-    result <- hypervolume_project(hv,
-                                  env_layers_clean,
-                                  type = "inclusion",
-                                  fast.or.accurate='accurate',
-                                  verbose = FALSE)
-    
-    
-    # Write the resulting projection in G space
-    writeRaster(x = result,
-                filename = paste0("../Outputs/hypervolumes/set", set, "/hv_svm_map_",
-                                  sprintf("%d.tif", year)),
-                overwrite = TRUE)
   }
-  
-  message(paste0("Set: ", set, "; end time: ", format(Sys.time(), "%X")))
-  
 }
-
-
-
-# result_df <- terra::as.data.frame(result, xy = TRUE)
-# names(result_df)[3] <- "pred"
-# 
-# table(result_df$pred)
-# 
-# result_df <- result_df %>% dplyr::filter(pred <= 1)
-# 
-# result_df$pred <- as.factor(result_df$pred)
-# 
-# f1 <- ggplot( ) + 
-#   geom_tile(data = result_df,
-#             aes(x = x, y = y, fill = pred)) +
-#   scale_fill_manual(values = c("lightblue", "green4")) +
-#   geom_polygon(data = states %>% dplyr::filter(!is.na(east_coast)), 
-#                aes(x = long, y = lat, group = group),
-#                color = "black", fill = "lightgrey") +
-#   xlab("Longitude") + ylab("Latitude") +
-#   scale_x_continuous(breaks = seq(-100, -60, 5)) +
-#   scale_y_continuous(breaks = seq(22, 47, 5)) +
-#   coord_fixed(1.3) +
-#   ggtitle(sprintf("%d", year)) 
-# f1
-# 
-# # ggpubr::ggarrange(a, f1)
-# 
-# 
-# tiff(paste0("../Figures/RS_", db, "/hv_svm_map_",sprintf("%d.tiff", year)),
-#      units = "in", width = 5, res = 300,
-#      height = 6, compression = "lzw")
-# f1
-# dev.off()
 
 
 # Post model analysis -----------------------------------------------------
@@ -781,12 +738,6 @@ theme_set(theme_bw() +
               legend.title = element_text(family = "Times", size = 15),
               legend.text = element_text(family = "Times", size = 13),
               legend.position = "right",
-              
-              # panel.grid.major.x = element_blank(),
-              # panel.grid.minor.x = element_blank(),
-              # 
-              # panel.grid.major.y = element_line(color = "grey"),
-              # panel.grid.minor.y = element_line(color = "lightgrey"),
               
               strip.text.x = element_text(family = "Times", size = 13)
             )
@@ -823,11 +774,10 @@ east_state_polygon <- sf:::as_Spatial(east_state_polygon$geometry)
 
 set <- "set1"
 
-
 if(!dir.exists(paste0("../Figures/", set))) dir.create(paste0("../Figures/", set))
 
 year_models <- lapply(list.files(paste0("../Outputs/hypervolumes/", set), 
-                                 pattern = "hv_svm_map_", 
+                                 pattern = "hv_svm_", 
                                  full.names = TRUE), rast)
 
 year_models <- lapply(year_models,
@@ -838,9 +788,6 @@ year_models <- lapply(year_models,
                            r_rc <- classify(r, rclmat, include.lowest = TRUE)
                            return(r_rc)
                          })
-
-
-
 
 
 # year_models <- year_models[-21]
@@ -1292,11 +1239,11 @@ evalplot.grps(pts = bg, pts.grp = block$bg.grp, envs = envs.bg) +
   ggplot2::ggtitle("Spatial block partitions: background")
 
 
-cb1 <- get.checkerboard1(occs, envs.bg, bg, aggregation.factor=30)
+folds <- get.checkerboard1(occs, envs.bg, bg, aggregation.factor=30)
 
-evalplot.grps(pts = occs, pts.grp = cb1$occs.grp, envs = envs.bg)
+evalplot.grps(pts = occs, pts.grp = folds$occs.grp, envs = envs.bg)
 
-evalplot.grps(pts = bg, pts.grp = cb1$bg.grp, envs = envs.bg)
+evalplot.grps(pts = bg, pts.grp = folds$bg.grp, envs = envs.bg)
 
 
 
